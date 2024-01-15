@@ -170,7 +170,7 @@ class GradSLAMDataset(torch.utils.data.Dataset):
                 )
         self.num_imgs = len(self.color_paths)
         self.poses = self.load_poses()
-        
+
         if self.end == -1:
             self.end = self.num_imgs
 
@@ -455,8 +455,8 @@ class ReplicaDataset(GradSLAMDataset):
         )
 
     def get_filepaths(self):
-        color_paths = natsorted(glob.glob(f"{self.input_folder}/results/frame*.jpg"))
-        depth_paths = natsorted(glob.glob(f"{self.input_folder}/results/depth*.png"))
+        color_paths = natsorted(glob.glob(f"{self.input_folder}/color/0*.png"))
+        depth_paths = natsorted(glob.glob(f"{self.input_folder}/depth/0*.png"))
         embedding_paths = None
         if self.load_embeddings:
             embedding_paths = natsorted(

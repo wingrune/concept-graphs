@@ -266,11 +266,39 @@ def main(cfg : DictConfig):
 
             # Skip the similarity computation 
             continue
-                
-        spatial_sim = compute_spatial_similarities(cfg, fg_detection_list, objects)
-        visual_sim = compute_visual_similarities(cfg, fg_detection_list, objects)
-        agg_sim = aggregate_similarities(cfg, spatial_sim, visual_sim)
         
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+
+        start.record()
+        spatial_sim = compute_spatial_similarities(cfg, fg_detection_list, objects)
+        end.record()
+
+        # Waits for everything to finish running
+        torch.cuda.synchronize()
+        print("compute_spatial_similarities", start.elapsed_time(end), start.elapsed_time(end) / len(objects) / len(objects))
+
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+
+        start.record()
+        visual_sim = compute_visual_similarities(cfg, fg_detection_list, objects)
+        end.record()
+
+        # Waits for everything to finish running
+        torch.cuda.synchronize()
+        print("compute_visual_similarities", start.elapsed_time(end))
+       
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+
+        start.record()
+        agg_sim = aggregate_similarities(cfg, spatial_sim, visual_sim)
+        end.record()
+
+        # Waits for everything to finish running
+        torch.cuda.synchronize()
+        print("aggregate_similarities", start.elapsed_time(end))
         # Compute the contain numbers for each detection
         if cfg.use_contain_number:
             # Get the contain numbers for all objects
@@ -286,9 +314,17 @@ def main(cfg : DictConfig):
         
         # Threshold sims according to cfg. Set to negative infinity if below threshold
         agg_sim[agg_sim < cfg.sim_threshold] = float('-inf')
-        
+
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+
+        start.record()
         objects = merge_detections_to_objects(cfg, fg_detection_list, objects, agg_sim)
-        
+        end.record()
+
+        # Waits for everything to finish running
+        torch.cuda.synchronize()
+        print("merge_detections_to_objects", start.elapsed_time(end))   
         # Perform post-processing periodically if told so
         if cfg.denoise_interval > 0 and (idx+1) % cfg.denoise_interval == 0:
             objects = denoise_objects(cfg, objects)
@@ -355,7 +391,7 @@ def main(cfg : DictConfig):
     if bg_objects is not None:
         bg_objects = MapObjectList([_ for _ in bg_objects.values() if _ is not None])
         bg_objects = denoise_objects(cfg, bg_objects)
-        
+ 
     objects = denoise_objects(cfg, objects)
     
     # Save the full point cloud before post-processing
@@ -379,10 +415,10 @@ def main(cfg : DictConfig):
         with gzip.open(pcd_save_path, "wb") as f:
             pickle.dump(results, f)
         print(f"Saved full point cloud to {pcd_save_path}")
-    
-    objects = filter_objects(cfg, objects)
+  
+    objects = filter_objects(cfg, objects) 
     objects = merge_objects(cfg, objects)
-    
+ 
     # Save again the full point cloud after the post-processing
     if cfg.save_pcd:
         results['objects'] = objects.to_serializable()

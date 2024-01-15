@@ -70,20 +70,21 @@ def main(args):
         dtype=torch.float,
     )
     cam_K = dataset.get_cam_K()
-    
+
     color_path = dataset.color_paths[0]
     image_pil = Image.open(color_path)
-    
+
     # Create the visualization
     vis = o3d.visualization.VisualizerWithKeyCallback()
     vis.create_window(
         window_name = "Mapping",
         width = image_pil.width,
         height = image_pil.height,
+        visible=True
     )
     
     view_ctrl = vis.get_view_control()
-    view_ctrl.change_field_of_view(10)
+    #view_ctrl.change_field_of_view(10)
     camera_param = view_ctrl.convert_to_pinhole_camera_parameters()
     
     main.show_bg = True
@@ -173,14 +174,14 @@ def main(args):
                 vis.add_geometry(geom, reset_bounding_box = i<2)
         
         camera_param.extrinsic = np.linalg.inv(to_numpy(camera_pose))
-        view_ctrl.convert_from_pinhole_camera_parameters(camera_param)
+        view_ctrl.convert_from_pinhole_camera_parameters(camera_param, True)
         view_ctrl.camera_local_translate(forward=-0.4, right=0.0, up=0.0)
         vis.poll_events()
         vis.update_renderer()
         
-        render_rgb = vis.capture_screen_float_buffer(False)
+        render_rgb = vis.capture_screen_float_buffer(True)
         render_rgb = np.asarray(render_rgb)
-        
+
         # Then render the objects in class-coded colors
         if color_mode_instance:
             objects.color_by_instance()
@@ -201,12 +202,12 @@ def main(args):
                 vis.add_geometry(geom, reset_bounding_box = i<2)
         
         camera_param.extrinsic = np.linalg.inv(to_numpy(camera_pose))
-        view_ctrl.convert_from_pinhole_camera_parameters(camera_param)
+        view_ctrl.convert_from_pinhole_camera_parameters(camera_param, True)
         view_ctrl.camera_local_translate(forward=-0.4, right=0.0, up=0.0)
         vis.poll_events()
         vis.update_renderer()
         
-        render_class = vis.capture_screen_float_buffer(False)
+        render_class = vis.capture_screen_float_buffer(True)
         render_class = np.asarray(render_class)
         
         # plt.subplot(2, 2, 1)
@@ -240,11 +241,11 @@ def main(args):
     vis.destroy_window()
     
     # Save the result as a video
-    imageio.mimwrite(video_save_path, result_frames, fps=10)
+    imageio.mimwrite(video_save_path, result_frames, fps=1)
     
     for k, v in result_frames_sep.items():
         sep_video_save_path = sep_video_save_folder / f"{k}.mp4"
-        imageio.mimwrite(sep_video_save_path, v, fps=10)
+        imageio.mimwrite(sep_video_save_path, v, fps=1)
 
 if __name__ == "__main__":
     parser = get_parser()

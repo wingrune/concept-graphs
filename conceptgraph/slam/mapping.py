@@ -1,5 +1,6 @@
 import torch
 import torch.nn.functional as F
+from datetime import datetime
 
 from conceptgraph.slam.slam_classes import MapObjectList, DetectionList
 from conceptgraph.utils.general_utils import Timer
@@ -96,7 +97,16 @@ def merge_detections_to_objects(
             j = agg_sim[i].argmax()
             matched_det = detection_list[i]
             matched_obj = objects[j]
+            start = torch.cuda.Event(enable_timing=True)
+            end = torch.cuda.Event(enable_timing=True)
+
+            start.record()
             merged_obj = merge_obj2_into_obj1(cfg, matched_obj, matched_det, run_dbscan=False)
+            end.record()
+
+            # Waits for everything to finish running
+            torch.cuda.synchronize()
+            print("merge_obj2_into_obj1", start.elapsed_time(end), start.elapsed_time(end) / len(objects) / len(objects))
             objects[j] = merged_obj
             
     return objects

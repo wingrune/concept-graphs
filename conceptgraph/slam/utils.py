@@ -360,7 +360,12 @@ def merge_overlap_objects(cfg, objects: MapObjectList, overlap_matrix: np.ndarra
     return objects
 
 def denoise_objects(cfg, objects: MapObjectList):
+    times = []
     for i in range(len(objects)):
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+
+        start.record()
         og_object_pcd = objects[i]['pcd']
         objects[i]['pcd'] = process_pcd(objects[i]['pcd'], cfg, run_dbscan=True)
         if len(objects[i]['pcd'].points) < 4:
@@ -368,16 +373,33 @@ def denoise_objects(cfg, objects: MapObjectList):
             continue
         objects[i]['bbox'] = get_bounding_box(cfg, objects[i]['pcd'])
         objects[i]['bbox'].color = [0,1,0]
-        
+
+        end.record()
+
+        # Waits for everything to finish running
+        torch.cuda.synchronize()
+        times.append(start.elapsed_time(end))
+    print("Denoise", np.mean(times), np.std(times))
     return objects
 
 def filter_objects(cfg, objects: MapObjectList):
     # Remove the object that has very few points or viewed too few times
     print("Before filtering:", len(objects))
+    times = []
     objects_to_keep = []
     for obj in objects:
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+
+        start.record()
         if len(obj['pcd'].points) >= cfg.obj_min_points and obj['num_detections'] >= cfg.obj_min_detections:
             objects_to_keep.append(obj)
+        end.record()
+
+        # Waits for everything to finish running
+        torch.cuda.synchronize()
+        times.append(start.elapsed_time(end))
+    print("Filter", np.mean(times), np.std(times))
     objects = MapObjectList(objects_to_keep)
     print("After filtering:", len(objects))
     
@@ -386,9 +408,28 @@ def filter_objects(cfg, objects: MapObjectList):
 def merge_objects(cfg, objects: MapObjectList):
     if cfg.merge_overlap_thresh > 0:
         # Merge one object into another if the former is contained in the latter
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+
+        start.record()
         overlap_matrix = compute_overlap_matrix(cfg, objects)
+        end.record()
+
+        # Waits for everything to finish running
+        torch.cuda.synchronize()
+        print("compute_overlap_matrix", start.elapsed_time(end), start.elapsed_time(end) / len(objects) / len(objects))  
         print("Before merging:", len(objects))
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+
+        start.record()
         objects = merge_overlap_objects(cfg, objects, overlap_matrix)
+        end.record()
+
+        # Waits for everything to finish running
+        torch.cuda.synchronize()
+        print("merge_overlap_objects", start.elapsed_time(end), start.elapsed_time(end) / len(objects) / len(objects))  
+
         print("After merging:", len(objects))
     
     return objects

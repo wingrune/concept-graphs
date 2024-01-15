@@ -52,7 +52,8 @@ sys.path.append(GSA_PATH) # This is needed for the following imports in this fil
 sys.path.append(TAG2TEXT_PATH) # This is needed for some imports in the Tag2Text files
 sys.path.append(EFFICIENTSAM_PATH)
 try:
-    from Tag2Text.models import tag2text
+    from Tag2Text.ram.models.tag2text import tag2text
+    from Tag2Text.ram.models.ram import ram
     from Tag2Text import inference_tag2text, inference_ram
     import torchvision.transforms as TS
 except ImportError as e:
@@ -71,8 +72,8 @@ SAM_ENCODER_VERSION = "vit_h"
 SAM_CHECKPOINT_PATH = os.path.join(GSA_PATH, "./sam_vit_h_4b8939.pth")
 
 # Tag2Text checkpoint
-TAG2TEXT_CHECKPOINT_PATH = os.path.join(TAG2TEXT_PATH, "./tag2text_swin_14m.pth")
-RAM_CHECKPOINT_PATH = os.path.join(TAG2TEXT_PATH, "./ram_swin_large_14m.pth")
+TAG2TEXT_CHECKPOINT_PATH = os.path.join(TAG2TEXT_PATH, "tag2text_swin_14m.pth")
+RAM_CHECKPOINT_PATH = os.path.join(TAG2TEXT_PATH, "ram_swin_large_14m.pth")
 
 FOREGROUND_GENERIC_CLASSES = [
     "item", "furniture", "object", "electronics", "wall decoration", "door"
@@ -81,6 +82,11 @@ FOREGROUND_GENERIC_CLASSES = [
 FOREGROUND_MINIMAL_CLASSES = [
     "item"
 ]
+
+segmentation_times = []
+tagging_times = []
+grounding_times = []
+clip_extraction_times = []
 
 def get_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
@@ -160,7 +166,11 @@ def compute_clip_features(image, detections, clip_model, clip_preprocess, clip_t
         y_max += bottom_padding
 
         cropped_image = image.crop((x_min, y_min, x_max, y_max))
-        
+
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+
+        start.record()
         # Get the preprocessed image for clip from the crop 
         preprocessed_image = clip_preprocess(cropped_image).unsqueeze(0).to("cuda")
 
@@ -171,7 +181,13 @@ def compute_clip_features(image, detections, clip_model, clip_preprocess, clip_t
         tokenized_text = clip_tokenizer([classes[class_id]]).to("cuda")
         text_feat = clip_model.encode_text(tokenized_text)
         text_feat /= text_feat.norm(dim=-1, keepdim=True)
-        
+
+        end.record()
+
+        # Waits for everything to finish running
+        torch.cuda.synchronize()
+
+        clip_extraction_times.append(start.elapsed_time(end))
         crop_feat = crop_feat.cpu().numpy()
         text_feat = text_feat.cpu().numpy()
 
@@ -191,10 +207,22 @@ def get_sam_segmentation_from_xyxy(sam_predictor: SamPredictor, image: np.ndarra
     sam_predictor.set_image(image)
     result_masks = []
     for box in xyxy:
+
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+
+        start.record()
         masks, scores, logits = sam_predictor.predict(
             box=box,
             multimask_output=True
         )
+
+        end.record()
+
+        # Waits for everything to finish running
+        torch.cuda.synchronize()
+
+        segmentation_times.append(start.elapsed_time(end))
         index = np.argmax(scores)
         result_masks.append(masks[index])
     return np.array(result_masks)
@@ -253,7 +281,16 @@ def get_sam_segmentation_dense(
         conf: (N,)
     '''
     if variant == "sam":
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+
+        start.record()
         results = model.generate(image)
+        end.record()
+
+        # Waits for everything to finish running
+        torch.cuda.synchronize()
+        segmentation_times.append(start.elapsed_time(end))
         mask = []
         xyxy = []
         conf = []
@@ -292,7 +329,7 @@ def get_sam_mask_generator(variant:str, device: str | int) -> SamAutomaticMaskGe
         mask_generator = SamAutomaticMaskGenerator(
             model=sam,
             points_per_side=12,
-            points_per_batch=144,
+            points_per_batch=72,
             pred_iou_thresh=0.88,
             stability_score_thresh=0.95,
             crop_n_layers=0,
@@ -414,7 +451,7 @@ def main(args: argparse.Namespace):
 
             specified_tags='None'
             # load model
-            tagging_model = tag2text.tag2text_caption(pretrained=TAG2TEXT_CHECKPOINT_PATH,
+            tagging_model = tag2text(pretrained=TAG2TEXT_CHECKPOINT_PATH,
                                                     image_size=384,
                                                     vit='swin_b',
                                                     delete_tag_index=delete_tag_index)
@@ -422,7 +459,7 @@ def main(args: argparse.Namespace):
             # we reduce the threshold to obtain more tags
             tagging_model.threshold = 0.64 
         elif args.class_set == "ram":
-            tagging_model = tag2text.ram(pretrained=RAM_CHECKPOINT_PATH,
+            tagging_model = ram(pretrained=RAM_CHECKPOINT_PATH,
                                          image_size=384,
                                          vit='swin_l')
             
@@ -487,7 +524,17 @@ def main(args: argparse.Namespace):
             raw_image = tagging_transform(raw_image).unsqueeze(0).to(args.device)
             
             if args.class_set == "ram":
+                start = torch.cuda.Event(enable_timing=True)
+                end = torch.cuda.Event(enable_timing=True)
+
+                start.record()
                 res = inference_ram.inference(raw_image , tagging_model)
+                end.record()
+
+                # Waits for everything to finish running
+                torch.cuda.synchronize()
+
+                tagging_times.append(start.elapsed_time(end))
                 caption="NA"
             elif args.class_set == "tag2text":
                 res = inference_tag2text.inference(raw_image , tagging_model, specified_tags)
@@ -530,14 +577,18 @@ def main(args: argparse.Namespace):
         ### Detection and segmentation ###
         if args.class_set == "none":
             # Directly use SAM in dense sampling mode to get segmentation
+
+
             mask, xyxy, conf = get_sam_segmentation_dense(
                 args.sam_variant, mask_generator, image_rgb)
+
             detections = sv.Detections(
                 xyxy=xyxy,
                 confidence=conf,
                 class_id=np.zeros_like(conf).astype(int),
                 mask=mask,
             )
+
             image_crops, image_feats, text_feats = compute_clip_features(
                 image_rgb, detections, clip_model, clip_preprocess, clip_tokenizer, classes, args.device)
 
@@ -547,6 +598,11 @@ def main(args: argparse.Namespace):
             
             cv2.imwrite(vis_save_path, annotated_image)
         else:
+
+            start = torch.cuda.Event(enable_timing=True)
+            end = torch.cuda.Event(enable_timing=True)
+
+            start.record()
             # Using GroundingDINO to detect and SAM to segment
             detections = grounding_dino_model.predict_with_classes(
                 image=image, # This function expects a BGR image...
@@ -554,7 +610,12 @@ def main(args: argparse.Namespace):
                 box_threshold=args.box_threshold,
                 text_threshold=args.text_threshold,
             )
-            
+            end.record()
+
+            # Waits for everything to finish running
+            torch.cuda.synchronize()
+
+            grounding_times.append(start.elapsed_time(end))
             if len(detections.class_id) > 0:
                 ### Non-maximum suppression ###
                 # print(f"Before NMS: {len(detections.xyxy)} boxes")
@@ -574,7 +635,7 @@ def main(args: argparse.Namespace):
                 detections.xyxy = detections.xyxy[valid_idx]
                 detections.confidence = detections.confidence[valid_idx]
                 detections.class_id = detections.class_id[valid_idx]
-                
+
                 ### Segment Anything ###
                 detections.mask = get_sam_segmentation_from_xyxy(
                     sam_predictor=sam_predictor,
@@ -636,3 +697,11 @@ if __name__ == "__main__":
     parser = get_parser()
     args = parser.parse_args()
     main(args)
+    print("Mean Segmentation time:", np.mean(segmentation_times[30:]))
+    print("std Segmentation time:", np.std(segmentation_times[30:]))
+    print("Mean tagging time:", np.mean(tagging_times[30:]))
+    print("std tagging time:", np.std(tagging_times[30:]))
+    print("Mean grounding time:", np.mean(grounding_times[30:]))
+    print("std grounding time:", np.std(grounding_times[30:]))
+    print("Mean clip_extraction time:", np.mean(clip_extraction_times[30:]))
+    print("std clip_extraction time:", np.std(clip_extraction_times[30:]))
