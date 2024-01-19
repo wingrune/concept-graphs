@@ -106,7 +106,7 @@ def merge_detections_to_objects(
 
             # Waits for everything to finish running
             torch.cuda.synchronize()
-            print("merge_obj2_into_obj1", start.elapsed_time(end), start.elapsed_time(end) / len(objects) / len(objects))
+            #print("merge_obj2_into_obj1", start.elapsed_time(end), start.elapsed_time(end) / len(objects) / len(objects))
             objects[j] = merged_obj
             
     return objects

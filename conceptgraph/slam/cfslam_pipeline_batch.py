@@ -53,6 +53,13 @@ BG_CLASSES = ["wall", "floor", "ceiling"]
 # Disable torch gradient computation
 torch.set_grad_enabled(False)
 
+spatial_sims = []
+visual_sims = []
+agg_sims = []
+denoisings = []
+total_times = []
+assos = []
+
 def compute_match_batch(cfg, spatial_sim: torch.Tensor, visual_sim: torch.Tensor) -> torch.Tensor:
     '''
     Compute object association based on spatial and visual similarities
@@ -119,7 +126,6 @@ def process_cfg(cfg: DictConfig):
 @hydra.main(version_base=None, config_path="../configs/slam_pipeline", config_name="base")
 def main(cfg : DictConfig):
     cfg = process_cfg(cfg)
-    
     # Initialize the dataset
     dataset = get_dataset(
         dataconfig=cfg.dataset_config,
@@ -276,8 +282,7 @@ def main(cfg : DictConfig):
 
         # Waits for everything to finish running
         torch.cuda.synchronize()
-        print("compute_spatial_similarities", start.elapsed_time(end), start.elapsed_time(end) / len(objects) / len(objects))
-
+        spatial_sims.append(start.elapsed_time(end))
         start = torch.cuda.Event(enable_timing=True)
         end = torch.cuda.Event(enable_timing=True)
 
@@ -287,8 +292,7 @@ def main(cfg : DictConfig):
 
         # Waits for everything to finish running
         torch.cuda.synchronize()
-        print("compute_visual_similarities", start.elapsed_time(end))
-       
+        visual_sims.append(start.elapsed_time(end))
         start = torch.cuda.Event(enable_timing=True)
         end = torch.cuda.Event(enable_timing=True)
 
@@ -298,7 +302,7 @@ def main(cfg : DictConfig):
 
         # Waits for everything to finish running
         torch.cuda.synchronize()
-        print("aggregate_similarities", start.elapsed_time(end))
+        agg_sims.append(start.elapsed_time(end))
         # Compute the contain numbers for each detection
         if cfg.use_contain_number:
             # Get the contain numbers for all objects
@@ -324,7 +328,7 @@ def main(cfg : DictConfig):
 
         # Waits for everything to finish running
         torch.cuda.synchronize()
-        print("merge_detections_to_objects", start.elapsed_time(end))   
+        assos.append(start.elapsed_time(end))   
         # Perform post-processing periodically if told so
         if cfg.denoise_interval > 0 and (idx+1) % cfg.denoise_interval == 0:
             objects = denoise_objects(cfg, objects)
@@ -354,7 +358,7 @@ def main(cfg : DictConfig):
             }
             with gzip.open(save_all_path, 'wb') as f:
                 pickle.dump(result, f)
-        
+
         if cfg.vis_render:
             objects_vis = MapObjectList([
                 copy.deepcopy(_) for _ in objects if _['num_detections'] >= cfg.obj_min_detections
@@ -391,9 +395,14 @@ def main(cfg : DictConfig):
     if bg_objects is not None:
         bg_objects = MapObjectList([_ for _ in bg_objects.values() if _ is not None])
         bg_objects = denoise_objects(cfg, bg_objects)
- 
+    start = torch.cuda.Event(enable_timing=True)
+    end = torch.cuda.Event(enable_timing=True)
+
+    start.record() 
     objects = denoise_objects(cfg, objects)
-    
+    end.record()
+    torch.cuda.synchronize()
+    print("Denoise objects", start.elapsed_time(end), len(objects))     
     # Save the full point cloud before post-processing
     if cfg.save_pcd:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -415,10 +424,28 @@ def main(cfg : DictConfig):
         with gzip.open(pcd_save_path, "wb") as f:
             pickle.dump(results, f)
         print(f"Saved full point cloud to {pcd_save_path}")
-  
-    objects = filter_objects(cfg, objects) 
+
+    start = torch.cuda.Event(enable_timing=True)
+    end = torch.cuda.Event(enable_timing=True)
+
+    start.record()   
+    objects = filter_objects(cfg, objects)
+    end.record()
+    torch.cuda.synchronize()
+    print("Filter objects", start.elapsed_time(end), len(objects))
+    start = torch.cuda.Event(enable_timing=True)
+    end = torch.cuda.Event(enable_timing=True)
+
+    start.record() 
     objects = merge_objects(cfg, objects)
- 
+    end.record()
+    torch.cuda.synchronize()
+    print("Merge objects", start.elapsed_time(end), len(objects))
+
+    print("Spatial sims:", np.mean(spatial_sims), np.mean(spatial_sims[30:]), np.std(spatial_sims), np.median(spatial_sims))
+    print("Visual sims:", np.mean(visual_sims), np.mean(visual_sims[30:]),  np.std(visual_sims), np.median(visual_sims))
+    print("Agg sims:", np.mean(agg_sims), np.mean(agg_sims[30:]), np.std(agg_sims))
+    print("Assos sims:", np.mean(assos), np.mean(assos[30:]), np.std(assos))
     # Save again the full point cloud after the post-processing
     if cfg.save_pcd:
         results['objects'] = objects.to_serializable()

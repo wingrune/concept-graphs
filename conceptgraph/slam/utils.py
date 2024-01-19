@@ -42,7 +42,7 @@ def create_or_load_colors(cfg, filename="gsa_classes_tag2text"):
     classes  = None
     with open(classes_fp, "r") as f:
         classes = json.load(f)
-    
+
     # create the class colors, or load them if they exist
     class_colors  = None
     class_colors_fp = cfg['dataset_root'] / cfg['scene_id'] / f"{filename}_colors.json"
@@ -379,7 +379,7 @@ def denoise_objects(cfg, objects: MapObjectList):
         # Waits for everything to finish running
         torch.cuda.synchronize()
         times.append(start.elapsed_time(end))
-    print("Denoise", np.mean(times), np.std(times))
+    #print("Denoise", np.mean(times), np.std(times))
     return objects
 
 def filter_objects(cfg, objects: MapObjectList):
@@ -399,7 +399,7 @@ def filter_objects(cfg, objects: MapObjectList):
         # Waits for everything to finish running
         torch.cuda.synchronize()
         times.append(start.elapsed_time(end))
-    print("Filter", np.mean(times), np.std(times))
+    #print("Filter", np.mean(times), np.std(times))
     objects = MapObjectList(objects_to_keep)
     print("After filtering:", len(objects))
     
@@ -417,7 +417,7 @@ def merge_objects(cfg, objects: MapObjectList):
 
         # Waits for everything to finish running
         torch.cuda.synchronize()
-        print("compute_overlap_matrix", start.elapsed_time(end), start.elapsed_time(end) / len(objects) / len(objects))  
+        #print("compute_overlap_matrix", start.elapsed_time(end), start.elapsed_time(end) / len(objects) / len(objects))  
         print("Before merging:", len(objects))
         start = torch.cuda.Event(enable_timing=True)
         end = torch.cuda.Event(enable_timing=True)
@@ -428,7 +428,7 @@ def merge_objects(cfg, objects: MapObjectList):
 
         # Waits for everything to finish running
         torch.cuda.synchronize()
-        print("merge_overlap_objects", start.elapsed_time(end), start.elapsed_time(end) / len(objects) / len(objects))  
+        #print("merge_overlap_objects", start.elapsed_time(end), start.elapsed_time(end) / len(objects) / len(objects))  
 
         print("After merging:", len(objects))
     
